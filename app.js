@@ -63,7 +63,6 @@ function itemObj(r){
     block:r[10], zterm:r[11], text1:r[12], credit:r[13], due:r[14],
     applied:r[15], remaining:r[16], bucket:r[17], name:r[18], local:r[19]};
 }
-function isBlocked(item){ return item[10] && String(item[10]).trim() !== ''; }
 function filteredItems(){
   const out = [];
   for(const r of DATA.items){
@@ -103,12 +102,11 @@ function byVendor(rows){
   for(const r of rows){
     const key=r[1];
     const o=v[key]||(v[key]={vendor:r[1],name:r[18],local:r[19],count:0,total:0,notdue:0,b:{},
-      over90:0,blocked:0,oldest:'',credits:[],cc:new Set(),maxDue:''});
+      over90:0,oldest:'',credits:[],cc:new Set(),maxDue:''});
     o.count++; o.total+=r[16]||0; o.cc.add(r[0]);
     o.b[r[17]]=(o.b[r[17]]||0)+(r[16]||0);
     if(r[17]==='Not Due') o.notdue+=r[16]||0;
     if(r[17]==='91-120 Days'||r[17]==='120+ Days') o.over90+=r[16]||0;
-    if(isBlocked(r)) o.blocked+=r[16]||0;
     if(r[14] && (!o.oldest || r[14]<o.oldest)) o.oldest=r[14];
     if(r[14] && r[14]>o.maxDue) o.maxDue=r[14];
     if(r[13]!=null) o.credits.push(r[13]);
@@ -124,11 +122,6 @@ function byTerms(rows){
     o.open+=r[16]||0; o.count++;
   }
   return Object.entries(t).sort((a,b)=>b[1].open-a[1].open);
-}
-function blockData(rows){
-  let blocked=0,open=0,bc=0,oc=0;
-  for(const r of rows){ if(isBlocked(r)){blocked+=r[16]||0;bc++;} else {open+=r[16]||0;oc++;} }
-  return {blocked,open,bc,oc};
 }
 function computeKpis(rows){
   let total=0, notdue=0, over90=0;
@@ -206,7 +199,6 @@ function renderAttention(rows, total, vendors){
   const over60=b['61-90 Days']+b['91-120 Days']+b['120+ Days'];
   const over90=b['91-120 Days']+b['120+ Days'];
   const over120=b['120+ Days'];
-  const bd=blockData(rows);
   const sorted=vendors.slice().sort((a,b)=>b.total-a.total);
   const big=sorted[0];
   const overBig=sorted.slice().sort((a,b)=>b.overdue-a.overdue)[0];
@@ -215,19 +207,12 @@ function renderAttention(rows, total, vendors){
     if(!bigInv || r[16]>bigInv[16]) bigInv=r;
     if(!oldestInv || (r[14] && r[14]<oldestInv[14])) oldestInv=r;
   }
-  const top10=sorted.slice(0,10).reduce((s,v)=>s+v.total,0);
-  const overList=sorted.filter(v=>v.overdue>0).slice(0,10);
-  const overTot=sorted.reduce((s,v)=>s+v.overdue,0);
-  const top10Over=overList.reduce((s,v)=>s+v.overdue,0);
   const pct=(v,t)=>(t>0? v/t*100:0);
   const tiles=[
     {l:'AP >30 Days',v:fmtAP(over30),s:fmtNum(pct(over30,total),1)+'% of total',c:'risk'},
     {l:'AP >60 Days',v:fmtAP(over60),s:fmtNum(pct(over60,total),1)+'% of total',c:'risk'},
     {l:'AP >90 Days',v:fmtAP(over90),s:fmtNum(pct(over90,total),1)+'% of total',c:'risk'},
     {l:'AP >120 Days',v:fmtAP(over120),s:fmtNum(pct(over120,total),1)+'% of total',c:'warn'},
-    {l:'Payment Block Exposure',v:fmtAP(bd.blocked),s:fmtInt(bd.bc)+' blocked lines',c:'warn'},
-    {l:'Top 10 Vendor Concentration',v:fmtNum(pct(top10,total),1)+'%',s:'of total outstanding AP',c:''},
-    {l:'Top 10 Overdue Concentration',v:fmtNum(pct(top10Over,overTot),1)+'%',s:'of total overdue AP',c:''},
     {l:'Largest Vendor Exposure',v:fmtAP(big?big.total:0),s:big?('<span class="nm">'+esc(big.name||big.vendor)+'</span>'):'',c:'risk'},
     {l:'Largest Overdue Vendor',v:fmtAP(overBig?overBig.overdue:0),s:overBig?('<span class="nm">'+esc(overBig.name||overBig.vendor)+'</span>'):'',c:'risk'},
     {l:'Largest Open Invoice',v:fmtAP(bigInv?bigInv[16]:0),s:bigInv?('<span class="nm">'+esc(bigInv[18])+' · '+esc(bigInv[2])+'</span>'):'',c:''},
@@ -244,9 +229,9 @@ const VCOL = [
   {k:'notdue',t:'Not Due',cls:'num'},{k:'b30',t:'0-30',cls:'num'},{k:'b60',t:'31-60',cls:'num'},
   {k:'b90',t:'61-90',cls:'num'},{k:'b120',t:'91-120',cls:'num'},{k:'b120p',t:'120+',cls:'num'},
   {k:'over90',t:'AP >90',cls:'num'},{k:'pct',t:'% of Total',cls:'num'},{k:'oldest',t:'Oldest Due',cls:''},
-  {k:'avgCredit',t:'Avg Credit Days',cls:'num'},{k:'blocked',t:'Blocked AP',cls:'num'},
+  {k:'avgCredit',t:'Avg Credit Days',cls:'num'},
 ];
-const VHEAD=['Vendor','Vendor Name','L/F','Company','Invoices','Total Outstanding','Not Due','0-30','31-60','61-90','91-120','120+','AP >90','% of Total','Oldest Due','Avg Credit Days','Blocked AP'];
+const VHEAD=['Vendor','Vendor Name','L/F','Company','Invoices','Total Outstanding','Not Due','0-30','31-60','61-90','91-120','120+','AP >90','% of Total','Oldest Due','Avg Credit Days'];
 function vendorRows(rows){
   return byVendor(rows).map(o=>({...o,
     b30:o.b['0-30 Days']||0,b60:o.b['31-60 Days']||0,b90:o.b['61-90 Days']||0,
@@ -264,7 +249,6 @@ const VFMT=(c,r,ctx)=>{
   if(c.k==='oldest') return '<td>'+(r.oldest?esc(r.oldest):'—')+'</td>';
   if(c.k==='avgCredit') return '<td class="num">'+fmtNum(r.avgCredit,0)+'</td>';
   if(c.k==='over90') return '<td class="num" style="color:'+(r.over90>0?'var(--danger)':'inherit')+'">'+fmtAP(r.over90)+'</td>';
-  if(c.k==='blocked') return '<td class="num" style="color:'+(r.blocked>0?'var(--warn)':'inherit')+'">'+fmtAP(r.blocked)+'</td>';
   if(c.k==='notdue') return heatTd(r.notdue, ctx.maxNot,'33,192,138');
   if(c.k==='b30') return heatTd(r.b30, ctx.max30,'79,140,255');
   if(c.k==='b60') return heatTd(r.b60, ctx.max60,'230,193,92');
@@ -284,10 +268,10 @@ const DCOL = [
   {k:'pdate',t:'Posting',cls:''},{k:'ddate',t:'Doc Date',cls:''},{k:'due',t:'Due',cls:''},
   {k:'credit',t:'Credit Days',cls:'num'},{k:'zterm',t:'Terms',cls:''},{k:'text1',t:'Term Text',cls:''},
   {k:'waers',t:'Cur',cls:''},{k:'dmbtr',t:'Invoice Amt',cls:'num'},{k:'applied',t:'Applied',cls:'num'},
-  {k:'remaining',t:'Remaining',cls:'num'},{k:'bucket',t:'Aging',cls:''},{k:'block',t:'Block',cls:''},
+  {k:'remaining',t:'Remaining',cls:'num'},{k:'bucket',t:'Aging',cls:''},
   {k:'local',t:'L/F',cls:''},
 ];
-const DHEAD=['Co','Vendor','Vendor Name','Document','FY','Line','Posting','Doc Date','Due','Credit Days','Terms','Term Text','Cur','Invoice Amt','Applied','Remaining','Aging','Block','L/F'];
+const DHEAD=['Co','Vendor','Vendor Name','Document','FY','Line','Posting','Doc Date','Due','Credit Days','Terms','Term Text','Cur','Invoice Amt','Applied','Remaining','Aging','L/F'];
 const DFMT=(c,r)=>{
   if(c.k==='vendor') return '<td>'+esc(strip0(r.vendor))+'</td>';
   if(c.k==='name') return '<td>'+esc(r.name||'')+'</td>';
@@ -295,7 +279,6 @@ const DFMT=(c,r)=>{
   if(c.k==='applied') return '<td class="num" style="color:var(--muted)">'+fmtAP(r.applied)+'</td>';
   if(c.k==='remaining') return '<td class="num" style="font-weight:600">'+fmtAP(r.remaining)+'</td>';
   if(c.k==='bucket') return '<td><span class="tag '+BUCKET_CLASS[r.bucket]+'">'+esc(r.bucket)+'</span></td>';
-  if(c.k==='block') return '<td>'+(isBlocked(r)?'<span class="tag t-Out">Blocked</span>':'—')+'</td>';
   if(c.k==='local') return '<td>'+esc(r.local==='FOREIGN'?'F':'L')+'</td>';
   if(c.k==='credit') return '<td class="num">'+fmtInt(r.credit)+'</td>';
   if(c.k==='pdate'||c.k==='ddate'||c.k==='due') return '<td>'+(r[c.k]?esc(r[c.k]):'—')+'</td>';
@@ -380,8 +363,8 @@ function csvFrom(rows, head, keys){
 function exportVendorCsv(rows){
   const flat=vendorRows(rows).map(v=>({vendor:v.vendor,name:v.name,local:v.local,cc:v.cc,count:v.count,
     total:v.total,notdue:v.notdue,b30:v.b30,b60:v.b60,b90:v.b90,b120:v.b120,b120p:v.b120p,
-    over90:v.over90,blocked:v.blocked,oldest:v.oldest,avgCredit:Math.round(v.avgCredit*10)/10}));
-  downloadCsv('ap_vendor_summary.csv',csvFrom(flat,VHEAD,['vendor','name','local','cc','count','total','notdue','b30','b60','b90','b120','b120p','over90','blocked','oldest','avgCredit']));
+    over90:v.over90,oldest:v.oldest,avgCredit:Math.round(v.avgCredit*10)/10}));
+  downloadCsv('ap_vendor_summary.csv',csvFrom(flat,VHEAD,['vendor','name','local','cc','count','total','notdue','b30','b60','b90','b120','b120p','over90','oldest','avgCredit']));
 }
 function exportDetailCsv(rows){
   downloadCsv('ap_open_line_items.csv',csvFrom(rows.map(itemObj),DHEAD,DCOL.map(c=>c.k)));
@@ -396,7 +379,7 @@ function fillSelect(id,opts,placeholder){
 function initFilters(){
   const all=DATA.items;
   const comps=[...new Set(all.map(r=>r[0]))].sort();
-  fillSelect('f-company',comps.map(c=>[c,c+' ('+fmtInt(all.filter(r=>r[0]===c).length)+')']),'All');
+  fillSelect('f-company',comps.map(c=>[c,c]),'All');
   const vmap={};
     for(const r of all) if(!(r[1] in vmap)) vmap[r[1]]=r[18];
     VENDOR_LIST=Object.keys(vmap).sort().map(v=>[v,vmap[v]||'']);
