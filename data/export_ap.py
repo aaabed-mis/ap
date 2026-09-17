@@ -33,15 +33,23 @@ OUT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT_JSON = os.path.join(OUT_DIR, "ap.json")
 OUT_JS = os.path.join(OUT_DIR, "data.js")
 AP_DB = os.path.join(DUCK, "fact_accounts_payable.duckdb")
+ADV_DB = os.path.join(DUCK, "fact_accounts_payable_advance.duckdb")
 
-con = duckdb.connect(AP_DB, read_only=True)
-T = "sap_prd.fact_accounts_payable"
+COLS = ("bukrs,lifnr,belnr,gjahr,buzei,budat,bldat,wrbtr,dmbtr,waers,zlspr,"
+        "zterm,text1,credit_days,due_date,applied_amount,remaining_amount,"
+        "overdue_bucket,name1,is_local")
 
-rows = con.execute(
-    f"SELECT bukrs,lifnr,belnr,gjahr,buzei,budat,bldat,wrbtr,dmbtr,waers,zlspr,"
-    f"zterm,text1,credit_days,due_date,applied_amount,remaining_amount,"
-    f"overdue_bucket,name1,is_local FROM {T}"
-).fetchall()
+def fetch(db, table):
+    con = duckdb.connect(db, read_only=True)
+    try:
+        return con.execute(f"SELECT {COLS} FROM sap_prd.{table}").fetchall()
+    finally:
+        con.close()
+
+# Combined source: vendor invoices (fact_accounts_payable) UNION advance
+# payments (fact_accounts_payable_advance). Identical 20-col schema; the
+# advance rows carry overdue_bucket = 'Advance Payment'.
+rows = fetch(AP_DB, "fact_accounts_payable") + fetch(ADV_DB, "fact_accounts_payable_advance")
 
 def d(v):
     return v.isoformat() if v else ""
@@ -76,18 +84,19 @@ as_of = datetime.date.today().isoformat()
 
 meta = {
     "generated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-    "source": "fact_accounts_payable (duckdb), BSIK-only FIFO payment-application, SAP ECC PRD",
+    "source": "fact_accounts_payable + fact_accounts_payable_advance (duckdb), BSIK-only FIFO payment-application, SAP ECC PRD",
     "as_of": as_of,
     "currency": "SAR",
-    "grain": "one row per UNPAID vendor line item (bukrs + lifnr + belnr + gjahr + buzei)",
+    "grain": "one row per UNPAID vendor line item (bukrs + lifnr + belnr + gjahr + buzei); invoices + advance payments",
     "rows": n,
     "vendors": vendors,
     "total_remaining": round(total_rem, 2),
     "total_applied": round(total_appl, 2),
     "total_dmbtr": round(total_dmb, 2),
     "notes": [
+        "Combined source: fact_accounts_payable (vendor invoices, SHKZG='H') UNION fact_accounts_payable_advance (advance payments, SHKZG='S').",
         "remaining_amount = outstanding AP of each line (POSITIVE SAR); Paid lines filtered at source.",
-        "overdue_bucket = Not Due / 0-30 / 31-60 / 61-90 / 91-120 / 120+ Days, vs CAST(GETDATE() AS DATE).",
+        "overdue_bucket = Not Due / 0-30 / 31-60 / 61-90 / 91-120 / 120+ Days (invoices) or Advance Payment (advances), vs CAST(GETDATE() AS DATE).",
         "due_date = BUDAT + credit_days (credit_days scraped from T052U term text; ADV/missing text -> 0).",
         "total_payment is a vendor-level payment pool repeated per row - never SUM() across rows.",
         "applied/remaining come from a vendor-level FIFO allocation, NOT SAP clearing (BSIK, no AUGBL/AUGDT).",

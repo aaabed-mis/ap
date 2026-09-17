@@ -6,13 +6,13 @@
 'use strict';
 
 const FONT = "'Segoe UI', Roboto, Arial, sans-serif";
-const BUCKET_ORDER = ['Not Due','0-30 Days','31-60 Days','61-90 Days','91-120 Days','120+ Days'];
+const BUCKET_ORDER = ['Not Due','0-30 Days','31-60 Days','61-90 Days','91-120 Days','120+ Days','Advance Payment'];
 const BUCKET_COLOR = {
   'Not Due':'#33c08a','0-30 Days':'#4f8cff','31-60 Days':'#e6c15c','61-90 Days':'#f0a63e',
-  '91-120 Days':'#ff8c42','120+ Days':'#e5484d'};
+  '91-120 Days':'#ff8c42','120+ Days':'#e5484d','Advance Payment':'#9b6bff'};
 const BUCKET_CLASS = {
   'Not Due':'t-NotDue','0-30 Days':'t-Low','31-60 Days':'t-Low','61-90 Days':'t-High',
-  '91-120 Days':'t-Critical','120+ Days':'t-Critical'};
+  '91-120 Days':'t-Critical','120+ Days':'t-Critical','Advance Payment':'t-NotDue'};
 
 let DATA = null;            // window.__AP__
 let VENDOR_LIST = [];       // [code, name] for the vendor combo
@@ -124,16 +124,18 @@ function byTerms(rows){
   return Object.entries(t).sort((a,b)=>b[1].open-a[1].open);
 }
 function computeKpis(rows){
-  let total=0, notdue=0, over90=0;
-  const inv=new Set();
+  // Advances are held out of Total Outstanding AP and shown on their own card.
+  let total=0, notdue=0, over90=0, advance=0, nInv=0, nAdv=0;
   for(const r of rows){
-    total+=r[16]||0;
-    if(r[17]==='Not Due') notdue+=r[16]||0;
-    if(r[17]==='91-120 Days'||r[17]==='120+ Days') over90+=r[16]||0;
-    inv.add(r[0]+'|'+r[2]+'|'+r[3]+'|'+r[4]);
+    const rem=r[16]||0;
+    if(r[17]==='Advance Payment'){ advance+=rem; nAdv++; continue; }
+    nInv++;
+    total+=rem;
+    if(r[17]==='Not Due') notdue+=rem;
+    if(r[17]==='91-120 Days'||r[17]==='120+ Days') over90+=rem;
   }
   const overdue=total-notdue;
-  return {total, notdue, overdue, over90, vendors:byVendor(rows).length, invoices:inv.size, count:rows.length};
+  return {total, notdue, overdue, over90, advance, count:nInv, advCount:nAdv};
 }
 function renderKPIs(k){
   const overduePct = k.total>0 ? k.overdue/k.total*100 : 0;
@@ -143,8 +145,7 @@ function renderKPIs(k){
     {cls:'k-good',label:'Not Due AP',value:fmtAP(k.notdue),sub:fmtNum(notduePct,1)+'% of total'},
     {cls:'k-risk',label:'Overdue AP',value:fmtAP(k.overdue),sub:fmtNum(overduePct,1)+'% of total'},
     {cls:'k-warn',label:'AP >90 Days',value:fmtAP(k.over90),sub:fmtNum(k.total>0?k.over90/k.total*100:0,1)+'% of total'},
-    {cls:'k-purple',label:'Open Vendors',value:fmtInt(k.vendors),sub:'distinct vendors'},
-    {cls:'k-value',label:'Open Invoices',value:fmtInt(k.invoices),sub:'distinct invoice keys'},
+    {cls:'k-purple',label:'Advance Payment',value:fmtAP(k.advance),sub:fmtInt(k.advCount)+' advance lines'},
   ];
   document.getElementById('kpis').innerHTML=cards.map(c=>
     '<div class="kpi '+c.cls+'"><div class="label">'+c.label+'</div><div class="value">'+c.value+'</div><div class="sub">'+c.sub+'</div></div>').join('');
@@ -228,14 +229,16 @@ const VCOL = [
   {k:'cc',t:'Company',cls:''},{k:'count',t:'Invoices',cls:'num'},{k:'total',t:'Total Outstanding',cls:'num'},
   {k:'notdue',t:'Not Due',cls:'num'},{k:'b30',t:'0-30',cls:'num'},{k:'b60',t:'31-60',cls:'num'},
   {k:'b90',t:'61-90',cls:'num'},{k:'b120',t:'91-120',cls:'num'},{k:'b120p',t:'120+',cls:'num'},
+  {k:'adv',t:'Advance',cls:'num'},
   {k:'over90',t:'AP >90',cls:'num'},{k:'pct',t:'% of Total',cls:'num'},{k:'oldest',t:'Oldest Due',cls:''},
   {k:'avgCredit',t:'Avg Credit Days',cls:'num'},
 ];
-const VHEAD=['Vendor','Vendor Name','L/F','Company','Invoices','Total Outstanding','Not Due','0-30','31-60','61-90','91-120','120+','AP >90','% of Total','Oldest Due','Avg Credit Days'];
+const VHEAD=['Vendor','Vendor Name','L/F','Company','Invoices','Total Outstanding','Not Due','0-30','31-60','61-90','91-120','120+','Advance','AP >90','% of Total','Oldest Due','Avg Credit Days'];
 function vendorRows(rows){
   return byVendor(rows).map(o=>({...o,
     b30:o.b['0-30 Days']||0,b60:o.b['31-60 Days']||0,b90:o.b['61-90 Days']||0,
     b120:o.b['91-120 Days']||0,b120p:o.b['120+ Days']||0,
+    adv:o.b['Advance Payment']||0,
     overdue:o.total-o.notdue})).sort((a,b)=>b.total-a.total);
 }
 const VFMT=(c,r,ctx)=>{
@@ -255,6 +258,7 @@ const VFMT=(c,r,ctx)=>{
   if(c.k==='b90') return heatTd(r.b90, ctx.max90,'240,166,62');
   if(c.k==='b120') return heatTd(r.b120, ctx.max120,'255,140,66');
   if(c.k==='b120p') return heatTd(r.b120p, ctx.max120p,'229,72,77');
+  if(c.k==='adv') return heatTd(r.adv, ctx.maxAdv,'155,107,255');
   return '<td>'+esc(r[c.k]==null?'':r[c.k])+'</td>';
 };
 function heatTd(v,max,base){
@@ -306,6 +310,7 @@ function drawTable(tableId, rows, cols, fmt, sortKey, sortDir, page, pageSize){
   ctx.max90=Math.max(...pageRows.map(r=>r.b90||0));
   ctx.max120=Math.max(...pageRows.map(r=>r.b120||0));
   ctx.max120p=Math.max(...pageRows.map(r=>r.b120p||0));
+  ctx.maxAdv=Math.max(...pageRows.map(r=>r.adv||0));
   tbl.querySelector('tbody').innerHTML=pageRows.map(r=>'<tr>'+cols.map(c=>fmt(c,r,ctx)).join('')+'</tr>').join('');
   return {total,pages,page:p};
 }
@@ -313,8 +318,8 @@ function drawTable(tableId, rows, cols, fmt, sortKey, sortDir, page, pageSize){
 /* ---------- refresh ---------- */
 function refresh(){
   const rows=filteredItems();
-  const total=sum(rows,r=>r[16]);
   const k=computeKpis(rows);
+  const total=k.total;   // Total Outstanding AP = invoices only (advances held out)
   renderKPIs(k);
   const b=byBucket(rows);
   renderAging(b);
@@ -322,9 +327,11 @@ function refresh(){
   renderLocal(local);
   renderCompany(byGroup(rows,r=>r[0]));
   renderTerms(byTerms(rows));
-  const vendors=vendorRows(rows).map(v=>({...v,pct:total>0?v.total/total*100:0}));
-  renderAttention(rows,total,vendors);
-  drawVendorTable(vendors);
+  const vendors=vendorRows(rows);
+  const vendTotal=vendors.reduce((s,v)=>s+v.total,0);   // incl advances -> matches the table's Total Outstanding
+  const vrows=vendors.map(v=>({...v,pct:vendTotal>0?v.total/vendTotal*100:0}));
+  renderAttention(rows,total,vrows);
+  drawVendorTable(vrows);
   drawDetailTable(rows);
 }
 function drawVendorTable(rows){
@@ -361,10 +368,12 @@ function csvFrom(rows, head, keys){
   return data.join('\n');
 }
 function exportVendorCsv(rows){
-  const flat=vendorRows(rows).map(v=>({vendor:v.vendor,name:v.name,local:v.local,cc:v.cc,count:v.count,
-    total:v.total,notdue:v.notdue,b30:v.b30,b60:v.b60,b90:v.b90,b120:v.b120,b120p:v.b120p,
-    over90:v.over90,oldest:v.oldest,avgCredit:Math.round(v.avgCredit*10)/10}));
-  downloadCsv('ap_vendor_summary.csv',csvFrom(flat,VHEAD,['vendor','name','local','cc','count','total','notdue','b30','b60','b90','b120','b120p','over90','oldest','avgCredit']));
+  const vr=vendorRows(rows);
+  const grand=vr.reduce((s,v)=>s+v.total,0);
+  const flat=vr.map(v=>({vendor:v.vendor,name:v.name,local:v.local,cc:v.cc,count:v.count,
+    total:v.total,notdue:v.notdue,b30:v.b30,b60:v.b60,b90:v.b90,b120:v.b120,b120p:v.b120p,adv:v.adv,
+    over90:v.over90,pct:grand>0?Math.round(v.total/grand*1000)/10:0,oldest:v.oldest,avgCredit:Math.round(v.avgCredit*10)/10}));
+  downloadCsv('ap_vendor_summary.csv',csvFrom(flat,VHEAD,['vendor','name','local','cc','count','total','notdue','b30','b60','b90','b120','b120p','adv','over90','pct','oldest','avgCredit']));
 }
 function exportDetailCsv(rows){
   downloadCsv('ap_open_line_items.csv',csvFrom(rows.map(itemObj),DHEAD,DCOL.map(c=>c.k)));
